@@ -1,0 +1,6 @@
+data
+logs
+airflow*
+
+.idea
+__pycache__
