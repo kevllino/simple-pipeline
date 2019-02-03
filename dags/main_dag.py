@@ -1,35 +1,56 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 
-import os
-
-import sys
 from airflow import DAG
-from airflow.contrib.operators.spark_submit_operator import SparkSubmitOperator
+from airflow.contrib.operators.dataproc_operator import DataprocClusterCreateOperator, DataprocClusterDeleteOperator, \
+    DataProcPySparkOperator
 
-os.environ["SPARK_HOME"] = "/usr/local/spark-2.3.2"
-sys.path.append(os.path.join(os.environ['SPARK_HOME'], 'bin'))
+from airflow.models import Variable
+from airflow.utils.trigger_rule import TriggerRule
+
+BUCKET = Variable.get('gcs_bucket')  # GCS bucket with our data.
 
 DEFAULT_DAG_ARGS = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': '2019-01-01',
+    # 'ignore_first_depends_on_past':True,
+    'wait_for_downstream': True,
+    'start_date': datetime.utcnow(),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 1,
     'retry_delay': timedelta(seconds=30),
-    'project_id': 'local_dag',
+    'project_id': Variable.get('gcp_project'),
     'schedule_interval': None  # setup to a daily cron task later
 }
 
-ZIP_PATH = "simple-pipe.zip"
+ZIP_PATH = 'gs://' + BUCKET + "/artifacts/simple-pipe.zip"
 
-with DAG('main_dag', default_args=DEFAULT_DAG_ARGS) as dag:
-
-    t_add = SparkSubmitOperator(
+with DAG('main_dag_17', default_args=DEFAULT_DAG_ARGS, catchup=False) as dag:
+    t_create_cluster = DataprocClusterCreateOperator(
+        task_id='create_dataproc_cluster',
+        # ds_nodash is an airflow macro for "[Execution] Date string no dashes"
+        # in YYYYMMDD format. See docs https://airflow.apache.org/code.html?highlight=macros#macros
+        cluster_name='simple-pipeline',
+        master_machine_type='n1-standard-2',
+        worker_machine_type='n1-standard-2',
+        num_workers=2,
+        zone='asia-south1-c'
+        #init_actions_uris=['gs://' + BUCKET + '/scripts/install_airflow.sh']
+    )
+    t_add = DataProcPySparkOperator(
         task_id='add',
-        application="spark_jobs/add_job.py",  # main?
-        py_files=ZIP_PATH,
-        application_args=["--run_date", "{{ execution_date }}"],
+        main='gs://' + BUCKET + "/spark_jobs/add_job.py",  # main?
+        pyfiles=ZIP_PATH,
+        arguments=["--run_date={{ execution_date }}", "--bucket="+BUCKET],
+        cluster_name='simple-pipeline',
     )
 
-    t_add
+    t_delete_cluster = DataprocClusterDeleteOperator(
+        task_id='delete_dataproc_cluster',
+        # Obviously needs to match the name of cluster created in the prior two Operators.
+        cluster_name='simple-pipeline',
+        # This will tear down the cluster even if there are failures in upstream tasks.
+        trigger_rule=TriggerRule.ALL_DONE
+    )
+
+    t_create_cluster >> t_add >> t_delete_cluster
