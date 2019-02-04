@@ -9,6 +9,8 @@ from airflow.utils.trigger_rule import TriggerRule
 
 BUCKET = Variable.get('gcs_bucket')  # GCS bucket with our data.
 
+DAG_VERSION = 4
+
 DEFAULT_DAG_ARGS = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -25,7 +27,7 @@ DEFAULT_DAG_ARGS = {
 
 ZIP_PATH = 'gs://' + BUCKET + "/artifacts/simple-pipe.zip"
 
-with DAG('main_dag_17', default_args=DEFAULT_DAG_ARGS, catchup=False) as dag:
+with DAG('main_dag_{}'.format(DAG_VERSION), default_args=DEFAULT_DAG_ARGS, catchup=False, concurrency=2, max_active_runs=2) as dag:
     t_create_cluster = DataprocClusterCreateOperator(
         task_id='create_dataproc_cluster',
         # ds_nodash is an airflow macro for "[Execution] Date string no dashes"
@@ -45,6 +47,22 @@ with DAG('main_dag_17', default_args=DEFAULT_DAG_ARGS, catchup=False) as dag:
         cluster_name='simple-pipeline',
     )
 
+    t_substract = DataProcPySparkOperator(
+        task_id='substract',
+        main='gs://' + BUCKET + "/spark_jobs/substract_job.py",  # main?
+        pyfiles=ZIP_PATH,
+        arguments=["--run_date={{ execution_date }}", "--bucket="+BUCKET],
+        cluster_name='simple-pipeline',
+    )
+
+    t_join = DataProcPySparkOperator(
+        task_id='join',
+        main='gs://' + BUCKET + "/spark_jobs/join.py",  # main?
+        pyfiles=ZIP_PATH,
+        arguments=["--run_date={{ execution_date }}", "--bucket=" + BUCKET],
+        cluster_name='simple-pipeline',
+    )
+
     t_delete_cluster = DataprocClusterDeleteOperator(
         task_id='delete_dataproc_cluster',
         # Obviously needs to match the name of cluster created in the prior two Operators.
@@ -53,4 +71,6 @@ with DAG('main_dag_17', default_args=DEFAULT_DAG_ARGS, catchup=False) as dag:
         trigger_rule=TriggerRule.ALL_DONE
     )
 
-    t_create_cluster >> t_add >> t_delete_cluster
+    t_create_cluster.set_downstream([t_add, t_substract])
+    t_join.set_upstream([t_add, t_substract])
+    t_join.set_downstream([t_delete_cluster])

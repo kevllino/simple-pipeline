@@ -7,11 +7,11 @@ import pyspark.sql.functions as f
 from spark_utils import *
 
 
-def add_to_df(df):
+def substract_from_df(df):
     return (df
      .withColumnRenamed("_c0", "key")
      .withColumnRenamed("_c1", "value")
-     .withColumn("add_value", f.col("value") + f.lit(100))
+     .withColumn("sub_value", f.col("value") - f.lit(2))
      )
 
 
@@ -33,6 +33,6 @@ if __name__ == '__main__':
 
     spark = get_or_create_spark_session()
     df = ingest_data(spark, get_data_source_path('gs://' + known_args.bucket + '/data',run_date, data_source_type="raw"))
-    enhanced_df = add_to_df(df)
-    enhanced_df.write.mode('overwrite').csv('gs://' + known_args.bucket + "/data/result/day={}".format(run_date.day), header=True)
+    enhanced_df = substract_from_df(df)
+    enhanced_df.write.mode('overwrite').csv('gs://' + known_args.bucket + "/data/result_sub/day={}".format(run_date.day), header=True)
 

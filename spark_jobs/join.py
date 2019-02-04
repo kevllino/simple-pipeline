@@ -7,15 +7,6 @@ import pyspark.sql.functions as f
 from spark_utils import *
 
 
-def add_to_df(df):
-    return (df
-     .withColumnRenamed("_c0", "key")
-     .withColumnRenamed("_c1", "value")
-     .withColumn("add_value", f.col("value") + f.lit(100))
-     )
-
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -32,7 +23,11 @@ if __name__ == '__main__':
     print("run_date is " + str(run_date))
 
     spark = get_or_create_spark_session()
-    df = ingest_data(spark, get_data_source_path('gs://' + known_args.bucket + '/data',run_date, data_source_type="raw"))
-    enhanced_df = add_to_df(df)
-    enhanced_df.write.mode('overwrite').csv('gs://' + known_args.bucket + "/data/result/day={}".format(run_date.day), header=True)
+    add_df = ingest_data(spark, get_data_source_path('gs://' + known_args.bucket + '/data',run_date, data_source_type="result"))
+    sub_df = ingest_data(spark, get_data_source_path('gs://' + known_args.bucket + '/data',run_date, data_source_type="result_sub"))
+    df = add_df.join(sub_df, 'key', 'inner')
+
+    df.write.mode('overwrite').csv(
+        'gs://' + known_args.bucket + "/data/finale/day={}".format(run_date.day), header=True)
+
 
